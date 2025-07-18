@@ -1,0 +1,624 @@
+---
+title: "OpenSyllabus_STM"
+format: html
+editor: visual
+---
+
+```{r}
+library(tidyverse)
+library(stm)
+library(stminsights)
+library(parallel)
+library(vroom)
+library(broom)
+library(reticulate)
+library(reshape2)
+library(tidyr)
+library(cowplot)
+py_config()
+```
+
+```{r}
+df <- data.frame(py_load_object('../DBE/OA_Tokenized_1226_stm.pkl'))
+```
+
+```{r}
+# 필요한 컬럼만 활용
+# df <- df %>% select(year, category, mf, birth, gender, tokens)
+```
+
+```{r}
+# 명목변수화
+# df <- df %>% filter(gender!='NaN') # 성별 없는 경우 제거
+# df$gender <- as.factor(unlist(df$gender))
+df$category <- as.factor(df$category)
+```
+
+```{r}
+# 토큰 리스트->문자열 처리 (for STM)
+df$tokens <- map_chr(df$tokens,str_c,collapse='  ')
+```
+
+```{r}
+myprocess <- textProcessor(df$tokens, metadata = df ,wordLengths=c(2,Inf),lowercase = F,
+                           removenumbers = F, removepunctuation = F, removestopwords = F, stem = F)
+myprocess
+length(myprocess$docs.removed)
+```
+
+```{r}
+# N개 이상의 문서에서 등장한 단어만 사용(lower.thresh)
+out <- prepDocuments(myprocess$documents, myprocess$vocab, myprocess$meta,lower.thresh = 100)
+```
+
+```{r}
+model1_searchK <- searchK(out$documents, out$vocab, K = c(4:30),
+                                prevalence = ~category+s(year),
+                                data = out$meta, init.type="Spectral"
+                                  ,cores=detectCores()-1)
+saveRDS(model1_searchK,'model1_searchK.rds')
+```
+
+```{r}
+plot(model1_searchK)
+```
+
+```{r}
+# 1. png 파일로 그래프를 출력할 장치를 켭니다.
+png(filename = "searchK_plot_large_font.png", width = 10, height = 8, units = "in", res = 300)
+
+# 2. 저장하려는 plot을 생성합니다.
+# cex.main, cex.lab, cex.axis 등의 파라미터를 추가하여 폰트 크기를 조절합니다.
+plot(model1_searchK,
+     main = "Diagnostic Values by Number of Topics", # (선택) 제목을 직접 지정
+     family = "serif",           # 폰트 스타일을 명조 계열(serif)로 변경
+     cex.main = 1.5,             # 제목(main) 폰트 크기를 1.5배로
+     cex.lab = 1.2,              # 축 이름(lab) 폰트 크기를 1.2배로
+     cex.axis = 1.0              # 축 숫자(axis) 폰트 크기를 1.0배로 (기본)
+)
+
+# 3. 그래픽 장치를 닫아 파일 저장을 완료합니다.
+dev.off()
+
+# 4. 저장 완료 메시지를 출력합니다.
+print("폰트 크기를 조절한 플롯을 'searchK_plot_large_font.png' 파일로 저장했습니다.")
+```
+
+```{r}
+model1_res <- model1_searchK$results
+model1_res <- unnest(model1_res,c(K,exclus,semcoh))
+```
+
+```{r}
+# 시각화
+ggplot(model1_res, aes(x = semcoh, y = exclus, label = K)) +
+  geom_point() +
+  geom_text(vjust = -0.5, hjust = 0.5) +
+  labs(x = "Semantic Coherence", y = "Exclusivity", title = "Semantic Coherence vs Exclusivity") +
+  theme_minimal()
+```
+
+```{r}
+# 사용자 데이터 준비 코드
+model1_res <- model1_searchK$results
+model1_res <- unnest(model1_res, c(K, exclus, semcoh))
+
+# 1. ggplot 그래프 객체를 변수에 저장합니다.
+p <- ggplot(model1_res, aes(x = semcoh, y = exclus, label = K)) +
+  geom_point(size = 2) + # 점 크기도 약간 키움
+  geom_text(vjust = -0.8, hjust = 0.5, size = 5) + # K값 폰트 크기 조절 (size)
+  labs(
+    x = "Semantic Coherence", 
+    y = "Exclusivity", 
+    title = "Semantic Coherence vs Exclusivity"
+  ) +
+  theme_minimal() + # 기본 테마 설정 후
+  theme(            # theme 함수로 세부 폰트 스타일 조정
+    text = element_text(family = "serif"), # 전체 폰트를 명조 계열(serif)로
+    plot.title = element_text(size = 16, face = "bold", hjust = 0.5), # 제목: 크기, 굵게, 가운데 정렬
+    axis.title = element_text(size = 14), # 축 이름: 크기
+    axis.text = element_text(size = 12)   # 축 숫자: 크기
+  )
+
+# 2. 화면에 그래프를 출력해봅니다.
+print(p)
+
+# 3. ggsave 함수로 그래프를 고화질 PNG 파일로 저장합니다.
+ggsave(
+  filename = "semcoh_exclusivity_plot.png", 
+  plot = p, 
+  width = 10, 
+  height = 8, 
+  units = "in", 
+  dpi = 300
+)
+
+# 4. 저장 완료 메시지를 출력합니다.
+print("ggplot을 'semcoh_exclusivity_plot.png' 파일로 저장했습니다.")
+```
+
+```{r}
+library(ggplot2)
+library(tidyr)
+
+# 데이터 준비
+model1_res <- model1_searchK$results
+model1_res <- unnest(model1_res, c(K, exclus, semcoh))
+
+# ggplot 그래프 객체 생성
+p <- ggplot(model1_res, aes(x = semcoh, y = exclus, label = K)) +
+  geom_point(size = 2) +
+  geom_text(vjust = -0.8, hjust = 0.5, size = 5) +
+  labs(
+    x = "Semantic Coherence", 
+    y = "Exclusivity", 
+    title = "Semantic Coherence vs Exclusivity"
+  ) +
+  theme_bw() + # 수정: 흰색 배경 + 격자선 테마로 변경
+  theme(            
+    text = element_text(family = "serif"), 
+    plot.title = element_text(size = 16, face = "bold", hjust = 0.5), 
+    axis.title = element_text(size = 14), 
+    axis.text = element_text(size = 12),
+    # (선택) 패널 테두리가 거슬린다면 아래 주석을 해제하세요.
+    # panel.border = element_blank() 
+  )
+
+# 화면에 그래프 출력
+print(p)
+
+# ggsave 함수로 그래프 저장
+ggsave(
+  filename = "semcoh_exclusivity_plot_white_grid.png", 
+  plot = p, 
+  width = 10, 
+  height = 8, 
+  units = "in", 
+  dpi = 300
+)
+
+# 저장 완료 메시지 출력
+print("흰색 배경과 격자선을 포함한 플롯을 'semcoh_exclusivity_plot_white_grid.png' 파일로 저장했습니다.")
+```
+
+```{r}
+stm_model1 <- stm(out$documents, out$vocab, K=15,
+              prevalence= ~category+s(year),
+              data=out$meta, init.type="Spectral",seed=2024,
+              verbose = F)
+```
+
+```{r}
+saveRDS(stm_model1,'stm_model1.rds')
+```
+
+```{r}
+summary(stm_model1)
+```
+
+```{r}
+plot(stm_model1,type='summary',labeltype = 'frex',n=10)
+```
+
+```{r}
+m1_K <- stm_model1$settings$dim$K
+stm_effect_model <-  estimateEffect(1:m1_K ~category+s(year),
+                                 stm_model1, meta = out$meta, uncertainty = "Global",prior=1e-5)
+```
+
+```{r}
+summary(stm_effect_model)
+```
+
+문서별 토픽 분포 (theta 활용)
+
+```{r}
+topic_document <- data.frame(stm_model1[["theta"]])
+topic_document$category <- out$meta$category
+topic_document$year <- out$meta$year
+topic_document$id <- out$meta$id
+names(topic_document) <- c("topic1", "topic2", "topic3", "topic4", "topic5", "topic6", "topic7", "topic8", "topic9", "topic10", "topic11", "topic12","topic13","topic14","topic15","category", "year",'id')
+
+topic_document
+```
+
+```{r}
+write_csv(topic_document,'240227_OpenSyllabus_topic_document.csv')
+```
+
+```{r}
+topic_document_long <-  
+topic_document %>%
+  pivot_longer(
+    cols = starts_with("topic"),
+    names_to = "topic",
+    values_to = "distribution"
+  ) %>% 
+  mutate(
+    topic = factor(topic, levels = paste0("topic", 1:15))
+  )
+```
+
+```{r}
+# Boxplot 시각화: 학문 분류별로 15개 토픽의 분포 표시
+ggplot(topic_document_long, aes(x = topic, y = distribution, fill = category)) +
+  geom_boxplot() +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1)) +
+  labs(title = "학문 분류별 토픽 분포", x = "토픽", y = "분포 비중") +
+  facet_wrap(~category, scales = "free")
+```
+
+```{r}
+# 학문 분야별로 토픽 분포의 평균 계산
+topic_document_mean <- topic_document %>%
+  group_by(category) %>%
+  summarise(across(starts_with("topic"), mean))
+
+# 거리 행렬 계산: 유클리드 거리 사용
+distance_matrix <- as.dist(dist(topic_document_mean[,-1])) # 첫 번째 열(category) 제외하고 계산
+
+# MDS 수행
+mds_result <- cmdscale(distance_matrix, k = 2) # 2차원 MDS
+
+# 결과 데이터 프레임 준비
+mds_df <- data.frame(
+  category = topic_document_mean$category,
+  x = mds_result[,1],
+  y = mds_result[,2]
+)
+
+# MDS 시각화
+ggplot(mds_df, aes(x = x, y = y, label = category)) +
+  geom_point() +
+  geom_text(vjust = -0.5) +
+  labs(title = "학문 분야별 토픽 분포에 따른 MDS 시각화",
+       x = "Dimension 1", y = "Dimension 2") +
+  theme_minimal()
+```
+
+```{r}
+# 데이터 준비 및 전처리
+# topic_document_mean_by_year <- topic_document %>%
+#   group_by(year, category) %>%
+#   summarise(across(starts_with("topic"), mean), .groups = "drop")
+
+# 거리 계산 및 MDS 수행을 위한 함수 정의
+perform_mds <- function(data) {
+  dist_matrix <- dist(data)
+  mds_result <- cmdscale(dist_matrix, k = 2)
+  return(mds_result)
+}
+
+# 연도별 MDS 결과 저장
+plot_list <- list()
+for (y in 2004:2019) {
+  topic_document_year <- topic_document %>% 
+    filter(year == y) %>%
+    group_by(category) %>%
+    summarise(across(starts_with("topic"), mean), .groups = "drop")
+  mds_result <- perform_mds(topic_document_year[,-1]) # 첫 번째 열(category) 제외하고 MDS 수행
+  
+  # MDS 결과를 기반으로 데이터프레임 생성
+  mds_df <- as.data.frame(mds_result)
+  mds_df$category <- topic_document_year$category
+  
+  # 연도별 MDS 결과 시각화
+  plot_list[[as.character(y)]] <- ggplot(mds_df, aes(x = V1, y = V2, label = category)) +
+    geom_point() +
+    geom_text(vjust = 1.5) +
+    labs(title = paste("Year:", y),
+         x = "MDS Dimension 1",
+         y = "MDS Dimension 2") +
+    theme_minimal()
+}
+
+# 시각화 결과를 배열하여 표시
+plot_grid(plotlist = plot_list, ncol = 3)
+```
+
+### BERTopic 과 비교 파일 준비
+
+```{r}
+# # 1. 문서-토픽 분포 저장
+# doc_topics <- as.data.frame(stm_model1$theta)
+# colnames(doc_topics) <- paste0("Topic_", 0:14)
+# write.csv(doc_topics, "stm_doc_topics.csv", row.names = FALSE)
+# 
+# # 2. 토픽-단어 분포 저장 (상위 30개 단어)
+# topic_words <- data.frame()
+# 
+# for (k in 1:15) {
+#   words <- labelTopics(stm_model1, k, n = 20)$frex
+#   beta <- exp(stm_model1$beta$logbeta[[1]][k,])
+#   top_idx <- order(beta, decreasing = TRUE)[1:20]
+#   
+#   temp_df <- data.frame(
+#     topic = k - 1,
+#     rank = 1:20,
+#     word = stm_model1$vocab[top_idx],
+#     score = beta[top_idx]
+#   )
+#   topic_words <- rbind(topic_words, temp_df)
+# }
+# 
+# write.csv(topic_words, "stm_topic_words.csv", row.names = FALSE)
+# 
+# print("파일 저장 완료!")
+```
+
+```{r}
+# R 코드 간소화 제안 (기존 코드도 문제 없음)
+# stm_model1$beta$logbeta[[1]]는 토픽-단어 행렬의 로그 확률을 담고 있습니다.
+log_beta <- stm_model1$beta$logbeta[[1]] 
+
+topic_words_list <- list()
+
+for (k in 1:15) {
+  # 로그 확률을 실제 확률로 변환하고 내림차순 정렬
+  top_indices <- order(log_beta[k, ], decreasing = TRUE)[1:20]
+  
+  temp_df <- data.frame(
+    topic = k - 1,
+    rank = 1:20,
+    word = stm_model1$vocab[top_indices],
+    score = exp(log_beta[k, top_indices])
+  )
+  topic_words_list[[k]] <- temp_df
+}
+
+# 리스트를 하나의 데이터프레임으로 결합
+final_topic_words <- do.call(rbind, topic_words_list)
+
+# CSV 파일로 저장
+write.csv(final_topic_words, "stm_topic_words.csv", row.names = FALSE)
+
+print("STM 토픽-단어 파일 저장 완료!")
+```
+
+```{r}
+# # FREX 기준으로 토픽별 단어 추출
+# labels <- labelTopics(stm_model1, n = 20)
+# 
+# topic_words_list <- list()
+# 
+# for (k in 1:15) {
+#   temp_df <- data.frame(
+#     topic = k - 1,
+#     rank = 1:20,
+#     word = labels$frex[k, ]
+#   )
+#   topic_words_list[[k]] <- temp_df
+# }
+# 
+# # 리스트를 하나의 데이터프레임으로 결합
+# final_topic_words <- do.call(rbind, topic_words_list)
+# 
+# # CSV 파일로 저장
+# write.csv(final_topic_words, "stm_topic_words.csv", row.names = FALSE)
+# 
+# print("STM 토픽-단어 파일 저장 완료! (FREX 기준)")
+```
+
+```{r}
+# stm 라이브러리가 설치 및 로드되었다고 가정합니다.
+# library(stm)
+
+# 훈련된 stm 모델 객체가 'stm_model'이라는 이름으로 존재한다고 가정합니다.
+# 예시: stm_model <- stm(...)
+
+# 1. labelTopics 함수를 한 번만 실행하여 모든 정보를 효율적으로 추출합니다.
+labels <- labelTopics(stm_model1, n = 20)
+
+# 2. 결과를 저장할 빈 리스트를 생성합니다.
+all_topics_list <- list()
+
+# 3. 토픽 개수를 확인합니다.
+num_topics <- nrow(labels$prob)
+
+# 4. 각 토픽에 대해 반복 작업을 실행합니다.
+for (k in 1:num_topics) {
+  
+  # 각 가중치별 상위 20개 단어 벡터를 쉼표로 구분된 하나의 문자열로 변환
+  frex_words  <- paste(labels$frex[k, ], collapse = ", ")
+  prob_words  <- paste(labels$prob[k, ], collapse = ", ")
+  lift_words  <- paste(labels$lift[k, ], collapse = ", ")
+  score_words <- paste(labels$score[k, ], collapse = ", ") # 수정된 부분: ->를 $로 변경
+  
+  # 현재 토픽의 데이터를 데이터프레임으로 생성
+  topic_df <- data.frame(
+    topic = k,
+    frex = frex_words,
+    prob = prob_words,
+    lift = lift_words,
+    score = score_words
+  )
+  
+  # 생성된 데이터프레임을 리스트에 추가
+  all_topics_list[[k]] <- topic_df
+}
+
+# 5. 리스트에 저장된 모든 데이터프레임을 하나의 데이터프레임으로 결합합니다.
+final_df <- do.call(rbind, all_topics_list)
+
+# 6. CSV 파일로 저장합니다.
+write.csv(final_df, "stm_top_words_wide.csv", row.names = FALSE)
+
+print("WIDE 포맷으로 단어 목록 추출 완료!")
+print("'stm_top_words_wide.csv' 파일이 저장되었습니다.")
+
+```
+
+```{r}
+# 6. Pickle 파일을 불러와 R 데이터프레임으로 변환합니다.
+metadata_df <- data.frame(py_load_object('../OA_Tokenized_1226.pkl'))
+```
+
+```{r}
+# --- STM 결과 및 실제 ID 매핑 ---
+
+# 2. 문서-토픽 확률(theta) 행렬을 데이터프레임으로 변환합니다.
+theta_df <- as.data.frame(stm_model1$theta)
+
+# 3. Topic 1의 비중이 높은 상위 30개 문서의 '행 번호(index)'를 찾습니다.
+top_30_indices <- order(theta_df$V1, decreasing = TRUE)[1:30]
+
+# 4. 위에서 찾은 인덱스를 사용해 out$meta에서 필요한 정보를 추출합니다.
+#    - id: 실제 문서 ID
+#    - tokens: 해당 문서의 토큰 정보
+#    - Topic1_Proportion: theta에서 가져온 토픽 비중
+stm_df <- data.frame(
+  id = out$meta$id[top_30_indices],
+  Topic1_Proportion = theta_df[top_30_indices, "V1"],
+  tokens = out$meta$tokens[top_30_indices],
+  category=out$meta$category[top_30_indices]
+)
+
+# 7. 필요한 컬럼(id, title, code, description)만 선택합니다.
+metadata_df_selected <- select(metadata_df, id, title, code, description,class)
+
+# 8. 두 데이터프레임의 'id' 컬럼 타입을 통일합니다.
+stm_df$id <- as.character(stm_df$id)
+metadata_df_selected$id <- as.character(metadata_df_selected$id)
+
+# 9. 'id' 컬럼을 기준으로 두 데이터프레임을 결합합니다.
+topic1_top_df <- merge(stm_df, metadata_df_selected, by = "id", all.x = TRUE)
+
+
+# --- 결과 확인 ---
+
+# 10. 최종 결합된 데이터프레임의 상위 일부를 출력합니다.
+print("--- Topic 1 상위 30개 문서와 선택된 메타정보 최종 결합 결과 ---")
+print(head(topic1_top_df))
+write.csv(topic1_top_df,'topic1_top_df.csv')
+```
+
+```{r}
+# ===================================================================
+# --- Topic 2: 비중 90% 이상, 상위 30개 문서 추출 ---
+# ===================================================================
+
+# 1. Topic 2 비중이 90% 이상인 문서의 인덱스를 찾습니다.
+high_prop_indices_t2 <- which(theta_df$V2 >= 0.9)
+
+if (length(high_prop_indices_t2) > 0) {
+  # 2. 해당 문서들을 비중 순으로 정렬하고 상위 30개를 선택합니다.
+  ordered_indices_t2 <- high_prop_indices_t2[order(theta_df$V2[high_prop_indices_t2], decreasing = TRUE)]
+  top_indices_t2 <- head(ordered_indices_t2, 30)
+
+  # 3. 인덱스를 사용해 필요한 정보를 추출합니다.
+  stm_df_t2 <- data.frame(
+    id = out$meta$id[top_indices_t2],
+    Topic2_Proportion = theta_df[top_indices_t2, "V2"],
+    tokens = out$meta$tokens[top_indices_t2],
+    category = out$meta$category[top_indices_t2]
+  )
+  
+  # 4. 'id' 컬럼 타입을 통일하고 결합합니다.
+  stm_df_t2$id <- as.character(stm_df_t2$id)
+  topic2_top_df <- merge(stm_df_t2, metadata_df_selected, by = "id", all.x = TRUE)
+
+  # 5. 결과를 확인하고 CSV 파일로 저장합니다.
+  print("--- Topic 2 (비중 >= 90%) 상위 30개 문서 결합 결과 ---")
+  print(head(topic2_top_df))
+  write.csv(topic2_top_df, 'topic2_top_df.csv', row.names = FALSE)
+  print("'topic2_top_df.csv' 파일이 저장되었습니다.")
+  
+} else {
+  print("Topic 2에 대해 90% 이상 비중을 차지하는 문서가 없습니다.")
+}
+```
+
+```{r}
+
+# ===================================================================
+# --- Topic 15: 비중 90% 이상, 상위 30개 문서 추출 ---
+# ===================================================================
+
+# 1. Topic 15 비중이 90% 이상인 문서의 인덱스를 찾습니다.
+high_prop_indices_t15 <- which(theta_df$V15 >= 0.9)
+
+if (length(high_prop_indices_t15) > 0) {
+  # 2. 해당 문서들을 비중 순으로 정렬하고 상위 30개를 선택합니다.
+  ordered_indices_t15 <- high_prop_indices_t15[order(theta_df$V15[high_prop_indices_t15], decreasing = TRUE)]
+  top_indices_t15 <- head(ordered_indices_t15, 30)
+
+  # 3. 인덱스를 사용해 필요한 정보를 추출합니다.
+  stm_df_t15 <- data.frame(
+    id = out$meta$id[top_indices_t15],
+    Topic15_Proportion = theta_df[top_indices_t15, "V15"],
+    tokens = out$meta$tokens[top_indices_t15],
+    category = out$meta$category[top_indices_t15]
+  )
+  
+  # 4. 'id' 컬럼 타입을 통일하고 결합합니다.
+  stm_df_t15$id <- as.character(stm_df_t15$id)
+  topic15_top_df <- merge(stm_df_t15, metadata_df_selected, by = "id", all.x = TRUE)
+
+  # 5. 결과를 확인하고 CSV 파일로 저장합니다.
+  print("--- Topic 15 (비중 >= 90%) 상위 30개 문서 결합 결과 ---")
+  print(head(topic15_top_df))
+  write.csv(topic15_top_df, 'topic15_top_df.csv', row.names = FALSE)
+  print("'topic15_top_df.csv' 파일이 저장되었습니다.")
+  
+} else {
+  print("Topic 15에 대해 90% 이상 비중을 차지하는 문서가 없습니다.")
+}
+```
+
+```{r}
+# 1. 필요한 라이브러리를 로드합니다.
+library(reticulate)
+library(dplyr)
+
+# (선택 사항) 파이썬 환경 설정
+# use_condaenv("your_conda_env_name")
+
+
+# --- 사전 데이터 준비 (한 번만 실행) ---
+
+# Pickle 파일을 불러와 메타데이터로 사용
+# metadata_df_full <- data.frame(py_load_object('../OA_Tokenized_1226.pkl'))
+metadata_df_selected <- select(metadata_df, id, title, code, description, class)
+metadata_df_selected$id <- as.character(metadata_df_selected$id) # id 타입을 미리 변환
+
+# STM 모델의 문서-토픽 확률 행렬
+theta_df <- as.data.frame(stm_model1$theta)
+
+
+# ===================================================================
+# --- 모든 토픽(1~15)에 대해 반복 작업 실행 ---
+# ===================================================================
+
+for (k in 1:15) {
+  
+  # 1. 현재 토픽(k)의 비중이 높은 상위 30개 문서의 '행 번호(index)'를 찾습니다.
+  # theta_df의 k번째 열을 기준으로 정렬합니다.
+  top_30_indices <- order(theta_df[[k]], decreasing = TRUE)[1:30]
+  
+  # 2. 인덱스를 사용해 필요한 정보를 추출하여 데이터프레임을 생성합니다.
+  stm_df <- data.frame(
+    id = out$meta$id[top_30_indices],
+    proportion = theta_df[top_30_indices, k], # 현재 토픽(k)의 비중 값
+    tokens = out$meta$tokens[top_30_indices],
+    category = out$meta$category[top_30_indices]
+  )
+  # 비중 컬럼 이름을 토픽 번호에 맞게 변경 (예: Topic1_Proportion)
+  colnames(stm_df)[2] <- paste0("Topic", k, "_Proportion")
+  
+  # 3. 'id' 컬럼 타입을 통일합니다.
+  stm_df$id <- as.character(stm_df$id)
+  
+  # 4. 두 데이터프레임을 결합합니다.
+  final_df <- merge(stm_df, metadata_df_selected, by = "id", all.x = TRUE)
+  
+  # 5. 토픽별로 다른 파일 이름을 생성하여 CSV 파일로 저장합니다.
+  output_filename <- paste0("topic", k, "_top30_df.csv")
+  write.csv(final_df, output_filename, row.names = FALSE)
+  
+  # 6. 진행 상황을 콘솔에 출력합니다.
+  print(paste(output_filename, "파일이 저장되었습니다."))
+  
+}
+
+print("--- 모든 토픽에 대한 파일 생성이 완료되었습니다. ---")
+```
